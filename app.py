@@ -1,3 +1,6 @@
+from calendar import monthrange
+from datetime import date
+
 import streamlit as st
 import numpy as np
 import numpy_financial as npf
@@ -22,15 +25,18 @@ st.markdown("Analyze structured collar conversion profiles, toggle live asset di
 PRESET_PROFILES = {
     "Alphabet Inc. 6.25% Series C (GOOGN)": {
         "preferred_ticker": "GOOGN", "common_ticker": "GOOGL", "par": 50.0, "coupon": 6.25,
-        "lower_collar": 351.87, "upper_collar": 439.75, "max_ratio": 0.14210, "min_ratio": 0.11370, "quarters": 10
+        "lower_collar": 351.87, "upper_collar": 439.75, "max_ratio": 0.14210, "min_ratio": 0.11370,
+        "maturity_date": "2029-05-16", "next_ex_dividend_date": "2027-01-30"
     },
     "Meta Platforms 6.50% Series A (META Pfd)": {
         "preferred_ticker": "META", "common_ticker": "META", "par": 50.0, "coupon": 6.50,
-        "lower_collar": 312.50, "upper_collar": 367.10, "max_ratio": 0.16000, "min_ratio": 0.13620, "quarters": 11
+        "lower_collar": 312.50, "upper_collar": 367.10, "max_ratio": 0.16000, "min_ratio": 0.13620,
+        "maturity_date": "2029-08-15", "next_ex_dividend_date": "2026-12-14"
     },
     "KKR & Co. 6.25% Series D (KKR.PRD)": {
         "preferred_ticker": "KKR-PD", "common_ticker": "KKR", "par": 50.0, "coupon": 6.25,
-        "lower_collar": 120.77, "upper_collar": 150.97, "max_ratio": 0.41400, "min_ratio": 0.33120, "quarters": 5
+        "lower_collar": 120.77, "upper_collar": 150.97, "max_ratio": 0.41400, "min_ratio": 0.33120,
+        "maturity_date": "2028-03-01", "next_ex_dividend_date": "2026-11-13"
     },
     "Custom (Manual Input / LLM Overwrite)": None
 }
@@ -52,7 +58,7 @@ if enable_sec_lookup:
     if st.sidebar.button("📡 Search SEC Registry") and user_email:
         with st.sidebar.spinner("Querying SEC EDGAR Engine..."):
             try:
-                sec_search_url = "https://sec.gov"
+                sec_search_url = "https://efts.sec.gov/LATEST/search-index"
                 query_string = '"mandatory convertible preferred stock"'
                 if search_ticker:
                     query_string += f" AND {search_ticker}"
@@ -64,8 +70,11 @@ if enable_sec_lookup:
                     "forms": ["424B5", "424B2", "8-K"]
                 }
                 
-                headers = {"User-Agent": f"ConvertibleModeler/1.0 ({user_email})"}
-                response = requests.post(sec_search_url, json=payload, headers=headers, timeout=10)
+                headers = {
+                    "User-Agent": f"Preferred Convertible Modeler {user_email}",
+                    "Accept-Encoding": "gzip, deflate",
+                }
+                response = requests.get(sec_search_url, params=payload, headers=headers, timeout=20)
                 
                 if response.status_code == 200:
                     hits = response.json().get("hits", {}).get("hits", [])
@@ -79,8 +88,8 @@ if enable_sec_lookup:
                             
                             accession_num = source.get("adsh", "").replace("-", "")
                             doc_name = source.get("primary_doc_name", "")
-                            cik = source.get("cik", "").zfill(10)
-                            full_url = f"https://sec.gov{cik}/{accession_num}/{doc_name}"
+                            cik = str(source.get("cik", "")).lstrip("0")
+                            full_url = f"https://www.sec.gov/Archives/edgar/data/{cik}/{accession_num}/{doc_name}"
                             filing_options[doc_title] = full_url
                         
                         selected_doc = st.sidebar.selectbox("Select a filing to pull text for the AI parser:", list(filing_options.keys()))
@@ -101,6 +110,11 @@ if enable_sec_lookup:
                             st.sidebar.caption("✅ Text snippet successfully captured. Ready to run the AI Extractor below.")
                     else:
                         st.sidebar.warning("No matching convertible registrations found for this filter criteria.")
+                elif response.status_code == 403:
+                    st.sidebar.error(
+                        "SEC refused this request (403). Verify the contact email in the User-Agent; "
+                        "the SEC may also restrict requests from shared or hosted IP addresses."
+                    )
                 else:
                     st.sidebar.error(f"SEC Portal Error Connection Code: {response.status_code}")
             except Exception as e:
@@ -112,7 +126,8 @@ selected_preset = st.selectbox("📂 Select a Known Preferred Asset Profile:", l
 # Default profile initialization
 defaults = {
     "ticker": "GOOGN", "market_price": 41.25, "common_price": 180.00, "par": 50.0, "coupon": 6.25,
-    "lower_collar": 351.87, "upper_collar": 439.75, "max_ratio": 0.14210, "min_ratio": 0.11370, "quarters": 10
+    "lower_collar": 351.87, "upper_collar": 439.75, "max_ratio": 0.14210, "min_ratio": 0.11370,
+    "maturity_date": None, "next_ex_dividend_date": None
 }
 
 # Execute dynamic background price parsing sequence
@@ -125,7 +140,8 @@ if PRESET_PROFILES[selected_preset]:
     defaults["upper_collar"] = cfg["upper_collar"]
     defaults["max_ratio"] = cfg["max_ratio"]
     defaults["min_ratio"] = cfg["min_ratio"]
-    defaults["quarters"] = cfg["quarters"]
+    defaults["maturity_date"] = date.fromisoformat(cfg["maturity_date"])
+    defaults["next_ex_dividend_date"] = date.fromisoformat(cfg["next_ex_dividend_date"])
     
     with st.spinner(f"Updating market data for {cfg['preferred_ticker']} / {cfg['common_ticker']}..."):
         try:
@@ -161,7 +177,8 @@ if use_llm:
                     "You are a precise financial parser. You must output ONLY valid raw JSON data matching this exact template layout. "
                     "Do not wrap it in markdown code blocks. Template: "
                     '{"ticker": "XYZ", "market_price": 50.0, "par": 50.0, "coupon": 6.25, "lower_collar": 100.0, "upper_collar": 150.0, '
-                    '"max_ratio": 0.1421, "min_ratio": 0.1137, "quarters": 10}'
+                    '"max_ratio": 0.1421, "min_ratio": 0.1137, "maturity_date": "YYYY-MM-DD", '
+                    '"next_ex_dividend_date": "YYYY-MM-DD"}'
                 )
                 payload = {
                     "inputs": f"<s>[INST] {system_instruction}\n\nParse this text:\n{prospectus_text} [/INST]",
@@ -171,7 +188,15 @@ if use_llm:
                 raw_text = response.json()['generated_text'] if isinstance(response.json(), list) else response.json().get('generated_text', '')
                 json_match = re.search(r'{.*}', raw_text, re.DOTALL)
                 if json_match:
-                    defaults.update(json.loads(json_match.group(0)))
+                    extracted_values = json.loads(json_match.group(0))
+                    for date_field in ("maturity_date", "next_ex_dividend_date"):
+                        if date_field in extracted_values:
+                            try:
+                                extracted_values[date_field] = date.fromisoformat(extracted_values[date_field])
+                            except (TypeError, ValueError):
+                                st.sidebar.warning(f"Could not parse extracted {date_field.replace('_', ' ')}.")
+                                extracted_values.pop(date_field)
+                    defaults.update(extracted_values)
                     st.sidebar.success("Structural overrides parsed successfully!")
             except Exception as e:
                 st.sidebar.error(f"AI Extraction Failure: {str(e)}")
@@ -191,7 +216,57 @@ with col3:
 with col4:
     max_r = st.number_input("Maximum Conversion Ratio", value=float(defaults["max_ratio"]), format="%.5f")
     min_r = st.number_input("Minimum Conversion Ratio", value=float(defaults["min_ratio"]), format="%.5f")
-    quarters_left = st.number_input("Remaining Distribution Quarters", value=int(defaults.get("quarters", 10)), step=1)
+
+if PRESET_PROFILES[selected_preset]:
+    maturity_date = defaults["maturity_date"]
+    next_ex_dividend_date = defaults["next_ex_dividend_date"]
+else:
+    date_col1, date_col2 = st.columns(2)
+    with date_col1:
+        maturity_date = st.date_input("Maturity Date", value=defaults["maturity_date"])
+    with date_col2:
+        next_ex_dividend_date = st.date_input(
+            "Next Ex-Dividend Date", value=defaults["next_ex_dividend_date"]
+        )
+
+if maturity_date is None or next_ex_dividend_date is None:
+    st.warning("Enter both a maturity date and the next ex-dividend date to calculate remaining quarters.")
+    st.stop()
+
+
+def add_months(value, months):
+    month_index = value.month - 1 + months
+    year = value.year + month_index // 12
+    month = month_index % 12 + 1
+    day = min(value.day, monthrange(year, month)[1])
+    return date(year, month, day)
+
+
+def get_remaining_distribution_schedule(maturity, next_ex_dividend, as_of=None):
+    as_of = as_of or date.today()
+    quarter_index = 0
+    while add_months(next_ex_dividend, quarter_index * 3) <= as_of:
+        quarter_index += 1
+
+    upcoming_ex_dividend = add_months(next_ex_dividend, quarter_index * 3)
+    if maturity <= as_of:
+        return upcoming_ex_dividend, 0
+
+    quarters = 0
+    while add_months(next_ex_dividend, quarter_index * 3) <= maturity:
+        quarters += 1
+        quarter_index += 1
+    return upcoming_ex_dividend, quarters
+
+
+next_ex_dividend_date, quarters_left = get_remaining_distribution_schedule(
+    maturity_date, next_ex_dividend_date
+)
+st.caption(
+    f"**Maturity Date:** {maturity_date:%B %d, %Y}  |  "
+    f"**Next Ex-Dividend Date:** {next_ex_dividend_date:%B %d, %Y}  |  "
+    f"**Remaining Distribution Quarters:** {quarters_left}"
+)
 
 # Advanced Valuation Core Mathematics
 quarterly_div = (par * (coupon / 100)) / 4
@@ -224,20 +299,28 @@ def get_payout_for_price(p):
     total_val = stock_val + total_dividends
     
     # Internal Rate of Return Matrix setup
-    c_flows = [-mkt_prc] + [quarterly_div] * (quarters_left - 1) + [quarterly_div + stock_val]
-    irr_v = npf.irr(c_flows)
-    ann_irr = ((1 + irr_v) ** 4) - 1 if irr_v is not None else 0.0
+    if quarters_left:
+        c_flows = [-mkt_prc] + [quarterly_div] * (quarters_left - 1) + [quarterly_div + stock_val]
+        irr_v = npf.irr(c_flows)
+        ann_irr = ((1 + irr_v) ** 4) - 1 if irr_v is not None else 0.0
+    else:
+        ann_irr = 0.0
     return ratio, stock_val, total_val, ann_irr, zone
 
 settlement_ratio, terminal_stock_value, total_val, annualized_irr, scenario_desc = get_payout_for_price(target_stock_price)
-cagr = (total_val / mkt_prc) ** (1 / (quarters_left / 4)) - 1 if mkt_prc > 0 else 0.0
+cagr = (total_val / mkt_prc) ** (1 / (quarters_left / 4)) - 1 if mkt_prc > 0 and quarters_left else 0.0
 
 # Render Dashboard Metrics Display Cards
 res1, res2, res3 = st.columns(3)
 res1.metric("Compounded Cash Flow IRR (Annual)", f"{annualized_irr*100:.2f}%") 
 res2.metric("Simple Yield CAGR", f"{cagr*100:.2f}%")
 res3.metric("Total Absolute Holding Return", f"{((total_val / mkt_prc) - 1)*100:.1f}%" if mkt_prc > 0 else "0.0%")
-st.info(f"**Current Pricing Zone Status:** {scenario_desc}")
+st.info(
+    f"**Current Pricing Zone Status:** {scenario_desc}  \n"
+    f"**Maturity Date:** {maturity_date:%B %d, %Y}  \n"
+    f"**Next Ex-Dividend Date:** {next_ex_dividend_date:%B %d, %Y}  \n"
+    f"**Remaining Distribution Quarters:** {quarters_left}"
+)
 
 # 6. CHARTING CANVAS INTERFACES
 if HAS_PLOTLY:

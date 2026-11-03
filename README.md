@@ -101,9 +101,11 @@ The sidebar contains an automated portal into the **SEC EDGAR Index Registry**. 
 2. Locate keyword anchors matching conversion threshold parameters.
 3. Automatically slice and clean the document's HTML structures down into a text block ready for parsing via the **Hugging Face AI Extractor**.
 
+### Maturity and Distribution Schedule
+Preset profiles include a maturity date and next ex-dividend date. For custom profiles, enter both dates to calculate remaining quarterly distributions. The dashboard displays the maturity date, upcoming ex-dividend date, and calculated quarter count.
+
 ### Parallel Scenario Analysis Table
 Located at the bottom of the interface workspace under **Step 3**, this financial matrix maps portfolio metrics across multiple simultaneous price targets. The framework scales points to display:
 *   A **-30% and -15% market stress-test** configuration.
 *   The **exact inflection barriers** of the underlying structural lower floor and upper cap collar walls.
 *   **Outperformance trajectories (+15% / +30%)**, mapping out changing conversion ratio adjustments, absolute holding returns, and compounded annualized internal rate of return variations simultaneously.
-
